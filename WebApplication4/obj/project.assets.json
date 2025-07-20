@@ -3508,11 +3508,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\HÜMEYRA\\source\\repos\\WebApplication4\\WebApplication4\\WebApplication4.csproj",
+      "projectUniqueName": "C:\\Project\\Basar_Proje\\WebApplication4\\WebApplication4.csproj",
       "projectName": "WebApplication4",
-      "projectPath": "C:\\Users\\HÜMEYRA\\source\\repos\\WebApplication4\\WebApplication4\\WebApplication4.csproj",
+      "projectPath": "C:\\Project\\Basar_Proje\\WebApplication4\\WebApplication4.csproj",
       "packagesPath": "C:\\Users\\HÜMEYRA\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\HÜMEYRA\\source\\repos\\WebApplication4\\WebApplication4\\obj\\",
+      "outputPath": "C:\\Project\\Basar_Proje\\WebApplication4\\obj\\",
       "projectStyle": "PackageReference",
       "fallbackFolders": [
         "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"

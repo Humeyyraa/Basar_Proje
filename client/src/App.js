@@ -38,7 +38,7 @@ function App() {
   const [eklemeModu, setEklemeModu] = useState(false);
 
   useEffect(() => {
-    axios.get('http://localhost:5000/api/point')
+    axios.get('http://localhost:5228/api/point')
       .then(res => {
         const wktData = res.data.data.map(point => ({
           id: point.id,
@@ -60,7 +60,7 @@ function App() {
       type: 'Point',
     };
 
-    axios.post('http://localhost:5000/api/point', newEntry)
+    axios.post('http://localhost:5228/api/point', newEntry)
       .then(() => {
         setWktList(prev => [...prev, newEntry]);
         setEklemeModu(false); // Nokta eklendikten sonra ekleme modunu kapat

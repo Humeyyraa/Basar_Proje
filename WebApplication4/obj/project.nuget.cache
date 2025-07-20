@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "ECE876QIFUg=",
+  "dgSpecHash": "jIoxfWN1evg=",
   "success": true,
-  "projectFilePath": "C:\\Users\\HÜMEYRA\\source\\repos\\WebApplication4\\WebApplication4\\WebApplication4.csproj",
+  "projectFilePath": "C:\\Project\\Basar_Proje\\WebApplication4\\WebApplication4.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\HÜMEYRA\\.nuget\\packages\\geoapi.coordinatesystems\\1.7.5\\geoapi.coordinatesystems.1.7.5.nupkg.sha512",
     "C:\\Users\\HÜMEYRA\\.nuget\\packages\\geoapi.core\\1.7.5\\geoapi.core.1.7.5.nupkg.sha512",
