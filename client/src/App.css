@@ -1,0 +1,94 @@
+.App {
+  text-align: center;
+}
+
+.navbar {
+  background-color: rgb(241, 194, 217);
+  padding: 25px 15px;
+  border-bottom: 2px solid #282c34;
+  text-align: center;
+  position: relative;
+  z-index: 100;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+}
+
+.navbar h1 {
+  margin: 0;
+  color: rgb(168, 127, 206);
+  font-size: 28px;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+.form-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+}
+
+.form-buttons button {
+  padding: 8px 16px;
+  background-color: rgb(161, 123, 197);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.form-buttons button:hover {
+  background-color: #d29ddc;
+}
+
+.form-area {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.form-area input[type="text"] {
+  padding: 6px;
+  font-size: 14px;
+  width: 250px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
+.form-area button {
+  padding: 8px 12px;
+  background-color: rgb(231, 121, 185);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.form-area button:hover {
+  background-color: #f396bb;
+}
+
+.popup {
+  position: absolute;
+  background: white;
+  padding: 10px;
+  border: 1px solid black;
+  border-radius: 5px;
+  top: 20px;
+  right: 20px;
+  z-index: 1000;
+  width: 300px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 14px;
+}
+
+.popup b {
+  color: rgb(161, 123, 197);
+}
