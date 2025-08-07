@@ -92,3 +92,96 @@
 .popup b {
   color: rgb(161, 123, 197);
 }
+
+.modal-overlay{
+  position: fixed;
+  top: 0;
+  left:0;
+  width: 100vw;
+  height: 100 vh;
+  background: rgb(0, 0,0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index:1000;
+
+}
+.modal-content {
+  background: #fff;
+  padding: 32px 24px;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  min-width: 320px;
+  max-width: 90vw;
+  animation: modalIn 0.25s;
+}
+@keyframes modalIn {
+  from { transform: scale(0.8); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+.modal-content h3{
+  margin-top: 0;
+  color:#6c2eb7;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.modal-content input{
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1c4e9;
+  border-radius:8px;
+  margin-bottom: 16px;
+  font-size: 1rem;
+  transition: border 0.3s;
+  outline: none;
+}
+.modal-content input:focus{
+  border-color: #6c2eb7;
+}
+.modal-content button{
+  padding: 8px 20px;
+  border: none;
+  border-radius: 8px;
+  background-color: #6c2eb7;
+  color: #fff;
+  font-weight:600;
+  margin-right: 8px;
+  cursor:pointer;
+  transition:background-color 0.3s;
+
+}
+.modal-content button:last-child{
+  background: #e0e0e0;
+  color: #333;
+
+}
+.modal-content button:hover{
+  background: #512da8;
+}
+/* Şık ve modern select kutusu */
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid #6c2eb7;
+  border-radius: 8px;
+  background: #f8f6fc;
+  font-size: 1rem;
+  color: #333;
+  margin-bottom: 16px;
+  outline: none;
+  transition: border 0.2s, box-shadow 0.2s;
+  box-shadow: 0 2px 8px rgba(108,46,183,0.04);
+}
+
+select:focus {
+  border-color: #a084ca;
+  box-shadow: 0 0 0 2px #d1c4e9;
+}
+
+select option {
+  background: #fff;
+  color: #333;
+  font-size: 1rem;
+  padding: 8px 0;
+}

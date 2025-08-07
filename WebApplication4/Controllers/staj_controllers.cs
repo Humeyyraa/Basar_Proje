@@ -5,6 +5,7 @@ using WebApplication4.Services;
 using WebApplication4.Helpers;
 using NetTopologySuite.IO;
 using WebApplication4.Helpers;
+using Microsoft.EntityFrameworkCore;
 
 namespace WebApplication4.Controllers
 {
@@ -12,30 +13,28 @@ namespace WebApplication4.Controllers
     [ApiController]
     public class PointController : ControllerBase
     {
-        private readonly MyInterface _service;
+        private readonly AppDbContext _context;
 
-        public PointController(MyInterface service)
+        public PointController(AppDbContext context)
         {
-            _service = service;
+            _context = context;
         }
 
         // 1. TÜM NOKTALARI GETİR
         [HttpGet]
-        public ActionResult<ResponseDto<List<PointDto>>> GetAllPoints()
+        public async Task<ActionResult> GetAllPoints()
         {
-            var points = _service.GetAll();
-
-            var dtoList = points.Select(p => new PointDto
-            {
-                Id = p.Id,
-                Name = p.Name,
-                WKT = p.Location?.AsText()
+            var points = await _context.Points.ToListAsync();
+            var dtoList = points.Select(p => new {
+                id = p.Id,
+                name = p.Name,
+                wkt = p.Location?.AsText(),
+                type = p.Location?.GeometryType,
+                tip = p.Tip
             }).ToList();
-
-            return Ok(new ResponseDto<List<PointDto>>
-            {
-                Mesaj = "Mevcut liste:",
-                Data = dtoList
+            return Ok(new {
+                mesaj = "Mevcut liste:",
+                data = dtoList
             });
         }
 
@@ -44,7 +43,7 @@ namespace WebApplication4.Controllers
         [HttpGet("{id}")]
         public ActionResult<ResponseDto<PointDto>> GetById(int id)
         {
-            var point = _service.GetById(id);
+            var point = _context.Points.FirstOrDefault(p => p.Id == id);
             if (point == null)
                 return NotFound();
 
@@ -52,7 +51,7 @@ namespace WebApplication4.Controllers
             {
                 Id = point.Id,
                 Name = point.Name,
-                WKT = point.Location?.AsText() // Geometry’yi WKT’ye çevir
+                WKT = point.Location?.AsText() // Geometry'yi WKT'ye çevir
             };
 
             return Ok(new ResponseDto<PointDto>
@@ -66,27 +65,31 @@ namespace WebApplication4.Controllers
         // 3. YENİ NOKTA EKLE
 
         
-        [HttpPost]
-        public ActionResult AddPoint(DTO_CreatePoint dto)
-        {
-            // WKT stringini Geometry'ye dönüştür
-            var geometry = GeometryHelper.WktToGeometry(dto.WKT, 4326, 3857); // Örnek: kaynak WGS84, hedef WebMercator
+   [HttpPost]
+public async Task<IActionResult> Post(PointDto dto)
+{
+    var geometry = new NetTopologySuite.IO.WKTReader().Read(dto.WKT);
 
-            var point = new Point
-            {
-                Name = dto.Name,
-                Location = geometry
-            };
+    var point = new Point
+    {
+        Name = dto.Name,
+        Location = geometry,
+        Tip = dto.Tip
+    };
 
-            var added = _service.Add(point);
+    _context.Points.Add(point);
+    await _context.SaveChangesAsync();
 
-            return Ok(new
-            {
-                added.Id,
-                added.Name,
-                added.Location
-            });
-        }
+    return Ok(new
+    {
+        id = point.Id,
+        name = point.Name,
+        wkt = point.Location.AsText(),
+        type = geometry.GeometryType,
+        tip = point.Tip
+    });
+}
+
         /*
         [HttpPost]
         public ActionResult AddPoint(DTO_CreatePoint dto)
@@ -114,10 +117,16 @@ namespace WebApplication4.Controllers
 
 
 
+        public class UpdateWKTDto
+        {
+            public string wkt { get; set; }
+            public string name { get; set; }
+        }
+
         [HttpPut("{id}/wkt")]
         public ActionResult<ResponseDto<Point>> UpdateWKT(int id, [FromBody] UpdateWKTDto dto)
         {
-            var updatedPoint = _service.UpdateWKT(id, dto.WKT);
+            var updatedPoint = _context.Points.FirstOrDefault(p => p.Id == id);
             if (updatedPoint == null)
             {
                 return NotFound(new ResponseDto<string>
@@ -127,9 +136,16 @@ namespace WebApplication4.Controllers
                 });
             }
 
+            if (!string.IsNullOrEmpty(dto.wkt))
+                updatedPoint.Location = new NetTopologySuite.IO.WKTReader().Read(dto.wkt);
+            if (!string.IsNullOrEmpty(dto.name))
+                updatedPoint.Name = dto.name;
+
+            _context.SaveChanges();
+
             return Ok(new ResponseDto<Point>
             {
-                Mesaj = "WKT başarıyla güncellendi.",
+                Mesaj = "Kayıt başarıyla güncellendi.",
                 Data = updatedPoint
             });
         }
@@ -139,8 +155,8 @@ namespace WebApplication4.Controllers
         [HttpDelete("{id}")]
         public ActionResult<ResponseDto<string>> DeletePoint(int id)
         {
-            var deleted = _service.Delete(id);
-            if (!deleted)
+            var point = _context.Points.FirstOrDefault(p => p.Id == id);
+            if (point == null)
             {
                 return NotFound(new ResponseDto<string>
                 {
@@ -148,6 +164,9 @@ namespace WebApplication4.Controllers
                     Data = null
                 });
             }
+
+            _context.Points.Remove(point);
+            _context.SaveChanges();
 
             return Ok(new ResponseDto<string>
             {
@@ -160,7 +179,7 @@ namespace WebApplication4.Controllers
         [HttpGet("ids")]
         public ActionResult<ResponseDto<List<int>>> GetAllIds()
         {
-            var ids = _service.GetAll().Select(p => p.Id).ToList();
+            var ids = _context.Points.Select(p => p.Id).ToList();
             return Ok(new ResponseDto<List<int>>
             {
                 Mesaj = "Kayıtlı ID'ler:",

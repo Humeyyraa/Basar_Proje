@@ -17,6 +17,8 @@ namespace WebApplication4.Migrations
                 table: "Points",
                 type: "geometry",
                 nullable: true);
+
+
         }
 
         protected override void Down(MigrationBuilder migrationBuilder)

@@ -8,5 +8,7 @@ namespace WebApplication4
         public string Name { get; set; }    
 
         public Geometry? Location { get; set; }  
+        
+        public string? Tip { get; set; }
     }
 }

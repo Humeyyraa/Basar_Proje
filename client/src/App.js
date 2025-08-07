@@ -3,6 +3,92 @@ import './App.css';
 import React, { useEffect, useState } from 'react';
 import MapComponent from './MapComponent';
 import axios from 'axios';
+import WKT from 'ol/format/WKT';
+import Polygon from 'ol/geom/Polygon';
+
+// Polygon içinde nokta kontrolü
+function isPointInPolygon(point, polygonWKT) {
+  try {
+    // WKT'den polygon geometrisini oluştur
+    const polygon = new WKT().readFeature(polygonWKT, {
+      dataProjection: 'EPSG:4326',
+      featureProjection: 'EPSG:3857'
+    }).getGeometry();
+    
+    // Point geometrisini oluştur
+    const pointGeom = new WKT().readFeature(point, {
+      dataProjection: 'EPSG:4326', 
+      featureProjection: 'EPSG:3857'
+    }).getGeometry();
+    
+    // Point'in polygon içinde olup olmadığını kontrol et
+    return polygon.intersectsCoordinate(pointGeom.getCoordinates());
+  } catch (error) {
+    console.error('Polygon kontrol hatası:', error);
+    return false;
+  }
+}
+
+// Aktif polygon'u bul
+function getActivePolygon(wktList, activePolygonId) {
+  if (activePolygonId) {
+    return wktList.find(item => item.id == activePolygonId);
+  }
+  return wktList.find(item => item.type === 'Polygon');
+}
+
+// A tipi objelerin başlangıç ve bitiş noktalarını bul
+function getATypeEndpoints(wktList) {
+  const aTypeObjects = wktList.filter(item => item.tip === 'A' && (item.type === 'Point' || item.type === 'LineString'));
+  const endpoints = [];
+  
+  aTypeObjects.forEach(obj => {
+    if (obj.type === 'Point') {
+      // Point'in kendisi endpoint
+      endpoints.push(obj.wkt);
+    } else if (obj.type === 'LineString') {
+      // LineString'in başlangıç ve bitiş noktalarını bul
+      const lineMatch = obj.wkt.match(/LINESTRING\s*\(\s*(.+?)\s*\)/i);
+      if (lineMatch) {
+        const points = lineMatch[1].split(',').map(p => p.trim());
+        if (points.length >= 2) {
+          // Başlangıç noktası
+          endpoints.push(`POINT(${points[0]})`);
+          // Bitiş noktası
+          endpoints.push(`POINT(${points[points.length - 1]})`);
+        }
+      }
+    }
+  });
+  
+  return endpoints;
+}
+
+// B tipi objenin A tipi endpoint'lerle kesişip kesişmediğini kontrol et
+function isBTypeValid(newObjWKT, wktList) {
+  const aTypeEndpoints = getATypeEndpoints(wktList);
+  
+  if (newObjWKT.startsWith('POINT')) {
+    // Point için: A tipi endpoint'lerden biriyle aynı koordinatta olmalı
+    return aTypeEndpoints.some(endpoint => endpoint === newObjWKT);
+  } else if (newObjWKT.startsWith('LINESTRING')) {
+    // LineString için: Başlangıç veya bitiş noktası A tipi endpoint'lerden biriyle kesişmeli
+    const lineMatch = newObjWKT.match(/LINESTRING\s*\(\s*(.+?)\s*\)/i);
+    if (lineMatch) {
+      const points = lineMatch[1].split(',').map(p => p.trim());
+      if (points.length >= 2) {
+        const startPoint = `POINT(${points[0]})`;
+        const endPoint = `POINT(${points[points.length - 1]})`;
+        
+        return aTypeEndpoints.some(endpoint => 
+          endpoint === startPoint || endpoint === endPoint
+        );
+      }
+    }
+  }
+  
+  return false;
+}
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
   const toRad = (value) => (value * Math.PI) / 180;
@@ -37,6 +123,56 @@ function App() {
   // **Ekleme modu** (haritaya tıklayınca nokta eklemek için)
   const [eklemeModu, setEklemeModu] = useState(false);
 
+  // Yeni: Nokta ekleme için modal kontrolü ve input
+  const [showNameModal, setShowNameModal] = useState(false);
+  const [clickedWKT, setClickedWKT] = useState(null);
+  const [nameInput, setNameInput] = useState('');
+
+  // Yeni: Line ekleme modalı için stateler
+  const [showLineModal, setShowLineModal] = useState(false);
+  const [linePoint1, setLinePoint1] = useState('');
+  const [linePoint2, setLinePoint2] = useState('');
+  const [lineName, setLineName] = useState('');
+  const [lineTip, setLineTip] = useState('A');
+
+  // Point ekleme modalı için stateler (Line ile uyumlu)
+  const [showPointModal, setShowPointModal] = useState(false);
+  const [pointWKT, setPointWKT] = useState('');
+  const [pointName, setPointName] = useState('');
+  const [pointTip, setPointTip] = useState('A');
+
+  // Point silme modalı için stateler
+  const [showPointDeleteModal, setShowPointDeleteModal] = useState(false);
+  const [deletePointWKT, setDeletePointWKT] = useState('');
+  const [deletePointName, setDeletePointName] = useState('');
+
+  // Poligon ekleme modalı için stateler
+  const [showPolygonModal, setShowPolygonModal] = useState(false);
+  const [polygonPoints, setPolygonPoints] = useState(['', '', '']);
+  const [polygonName, setPolygonName] = useState('');
+
+  // Haritaya tıklayarak point ekleme için state
+  const [pendingMapPoint, setPendingMapPoint] = useState(null);
+
+  // Point ekleme modalı için seçenek
+  const [showPointOptionModal, setShowPointOptionModal] = useState(false);
+
+  // Haritadan line ekleme için state
+  const [pendingMapLine, setPendingMapLine] = useState([]);
+  const [pendingMapLineModal, setPendingMapLineModal] = useState(false);
+  const [pendingMapLineName, setPendingMapLineName] = useState('');
+  const [pendingMapLineTip, setPendingMapLineTip] = useState('A');
+  // Line ekleme modalı için seçenek
+  const [showLineOptionModal, setShowLineOptionModal] = useState(false);
+
+
+
+  // İki nokta seçilince modalı aç
+  useEffect(() => {
+    if (pendingMapLine.length === 2) setPendingMapLineModal(true);
+    else if (pendingMapLine.length < 2) setPendingMapLineModal(false);
+  }, [pendingMapLine]);
+
   useEffect(() => {
     axios.get('http://localhost:5228/api/point')
       .then(res => {
@@ -50,26 +186,61 @@ function App() {
       });
   }, []);
 
-  // Haritaya tıklanan yeni noktayı backend'e kaydet ve state güncelle
+  // Haritaya tıklayarak point ekleme
   const handleNewPointFromMap = (wkt) => {
-    const id = Date.now();
-    const newEntry = {
-      id,
-      wkt,
-      name: `Nokta ${id}`,
-      type: 'Point',
-    };
+    // Aktif polygon kontrolü
+    const activePolygon = getActivePolygon(wktList, activePolygonId);
+    if (!activePolygon) {
+      alert('Önce bir polygon seçin!');
+      setEklemeModu(false);
+      return;
+    }
+    
+    // Point'in polygon içinde olup olmadığını kontrol et
+    if (!isPointInPolygon(wkt, activePolygon.wkt)) {
+      alert('Sadece seçili polygon içinde çizim yapabilirsiniz!');
+      setEklemeModu(false);
+      return;
+    }
+    
+    // B tipi için özel kontrol (haritadan ekleme için tip seçimi yok, varsayılan A)
+    // Bu kontrol haritadan ekleme için geçerli değil çünkü tip seçimi modal'da yapılıyor
+    
+    setPendingMapPoint(wkt);
+    setPointName('');
+  };
 
-    axios.post('http://localhost:5228/api/point', newEntry)
-      .then(() => {
-        setWktList(prev => [...prev, newEntry]);
-        setEklemeModu(false); // Nokta eklendikten sonra ekleme modunu kapat
+  // Modal onayında backend'e gönder
+  const handleNameModalSubmit = () => {
+    if (!nameInput.trim() || !clickedWKT) return;
+    const dto = {
+      name: nameInput,
+      wkt: clickedWKT
+    };
+    axios.post('http://localhost:5228/api/point', dto)
+      .then((res) => {
+        // Backend'den dönen veriye göre listeyi güncelle
+        // (Varsa backend'den dönen yeni noktayı ekle, yoksa elle ekle)
+        setWktList(prev => [...prev, {
+          id: res.data.id,
+          wkt: clickedWKT,
+          name: nameInput,
+          type: 'Point',
+        }]);
+        setShowNameModal(false);
+        setClickedWKT(null);
+        setNameInput('');
+        setEklemeModu(false);
       })
       .catch(err => {
-        console.error('Nokta eklenirken hata:', err);
         alert('Nokta eklenirken hata oluştu!');
+        setShowNameModal(false);
+        setClickedWKT(null);
+        setNameInput('');
+        setEklemeModu(false);
       });
   };
+
 
   const handleAddWKT = () => {
     if (newWKT.trim() === '' || newName.trim() === '') return;
@@ -137,73 +308,586 @@ function App() {
     setShowDistanceForm(false);
   };
 
+  // Bilgi modalı açılırken name modalı kapansın
+  const handleSetSelectedPoint = (point) => {
+    setShowNameModal(false);
+    setSelectedPoint(point);
+  };
+
+  // Line ekleme modalı kaydet fonksiyonu
+  const handleLineModalSubmit = () => {
+    // Aktif polygon kontrolü
+    const activePolygon = getActivePolygon(wktList, activePolygonId);
+    if (!activePolygon) {
+      alert('Önce bir polygon seçin!');
+      return;
+    }
+    
+    // POINT(x y) formatından koordinatları al
+    const regex = /POINT\s*\(\s*([\d\.-]+)\s+([\d\.-]+)\s*\)/i;
+    const match1 = linePoint1.match(regex);
+    const match2 = linePoint2.match(regex);
+    if (!match1 || !match2 || !lineName.trim()) {
+      alert('Lütfen iki geçerli POINT ve bir isim girin!');
+      return;
+    }
+    
+    // Line'ın her iki noktasının da polygon içinde olup olmadığını kontrol et
+    const point1WKT = `POINT(${match1[1]} ${match1[2]})`;
+    const point2WKT = `POINT(${match2[1]} ${match2[2]})`;
+    
+    if (!isPointInPolygon(point1WKT, activePolygon.wkt) || 
+        !isPointInPolygon(point2WKT, activePolygon.wkt)) {
+      alert('Line sadece seçili polygon içinde çizilebilir!');
+      return;
+    }
+    
+    // B tipi için özel kontrol
+    if (lineTip === 'B') {
+      if (!isBTypeValid(lineWKT, wktList)) {
+        alert('B tipi objeler sadece A tipi objelerin başlangıç veya bitiş noktalarıyla kesişebilir!');
+        return;
+      }
+    }
+    
+    const x1 = match1[1], y1 = match1[2];
+    const x2 = match2[1], y2 = match2[2];
+    const lineWKT = `LINESTRING(${x1} ${y1}, ${x2} ${y2})`;
+    const dto = {
+      name: lineName,
+      wkt: lineWKT,
+      tip: selectedTip
+    };
+    axios.post('http://localhost:5228/api/point', dto)
+      .then(res => {
+        setWktList(prev => [...prev, {
+          id: res.data.id,
+          wkt: res.data.wkt,
+          name: res.data.name,
+          type: res.data.type,
+          tip: selectedTip
+        }]);
+        setShowLineModal(false);
+        setLinePoint1('');
+        setLinePoint2('');
+        setLineName('');
+        setLineTip('A');
+      })
+      .catch(() => {
+        alert('Çizgi eklenirken hata oluştu!');
+      });
+  };
+
+  // Point ekleme modalı kaydet fonksiyonu
+  const handlePointModalSubmit = () => {
+    // Aktif polygon kontrolü
+    const activePolygon = getActivePolygon(wktList, activePolygonId);
+    if (!activePolygon) {
+      alert('Önce bir polygon seçin!');
+      return;
+    }
+    
+    // POINT(x y) formatı kontrolü
+    const regex = /POINT\s*\(\s*([\d\.-]+)\s+([\d\.-]+)\s*\)/i;
+    const match = pointWKT.match(regex);
+    if (!match || !pointName.trim()) {
+      alert('Lütfen geçerli bir POINT ve isim girin!');
+      return;
+    }
+    
+    // Point'in polygon içinde olup olmadığını kontrol et
+    if (!isPointInPolygon(pointWKT, activePolygon.wkt)) {
+      alert('Point sadece seçili polygon içinde çizilebilir!');
+      return;
+    }
+    
+    // B tipi için özel kontrol
+    if (pointTip === 'B') {
+      if (!isBTypeValid(pointWKT, wktList)) {
+        alert('B tipi objeler sadece A tipi objelerin başlangıç veya bitiş noktalarıyla kesişebilir!');
+        return;
+      }
+    }
+    
+    const wkt = pointWKT;
+    const dto = {
+      name: pointName,
+      wkt: wkt,
+      tip: selectedTip
+    };
+    axios.post('http://localhost:5228/api/point', dto)
+      .then(res => {
+        setWktList(prev => [...prev, {
+          id: res.data.id, // Backend'den dönen id kullanılıyor
+          wkt: res.data.wkt,
+          name: res.data.name,
+          type: res.data.type,
+          tip: selectedTip
+        }]);
+        setShowPointModal(false);
+        setPointWKT('');
+        setPointName('');
+        setPointTip('A');
+      })
+      .catch(() => {
+        alert('Nokta eklenirken hata oluştu!');
+      });
+  };
+
+  // Point silme modalı fonksiyonu
+  const handlePointDeleteModalSubmit = () => {
+    // WKT veya isim ile silme
+    let target = null;
+    if (deletePointWKT.trim()) {
+      target = wktList.find(item => item.wkt === deletePointWKT.trim());
+    } else if (deletePointName.trim()) {
+      target = wktList.find(item => item.name === deletePointName.trim());
+    } else {
+      alert('Lütfen silmek için bir WKT veya isim girin!');
+      return;
+    }
+    if (!target) {
+      alert('Silinecek nokta bulunamadı!');
+      return;
+    }
+    // Backend'e DELETE isteği at
+    axios.delete(`http://localhost:5228/api/point/${target.id}`)
+      .then(() => {
+        setWktList(prev => prev.filter(item => item.id !== target.id));
+        setShowPointDeleteModal(false);
+        setDeletePointWKT('');
+        setDeletePointName('');
+      })
+      .catch(() => {
+        alert('Silme işlemi başarısız!');
+      });
+  };
+
+  // Poligon ekleme modalı kaydet fonksiyonu
+  const handlePolygonModalSubmit = () => {
+    // En az 3 geçerli nokta ve isim olmalı
+    const regex = /POINT\s*\(\s*([\d\.-]+)\s+([\d\.-]+)\s*\)/i;
+    const coords = polygonPoints
+      .map(p => {
+        const match = p.match(regex);
+        return match ? `${match[1]} ${match[2]}` : null;
+      })
+      .filter(Boolean);
+    if (coords.length < 3 || !polygonName.trim()) {
+      alert('En az 3 geçerli POINT ve bir isim girin!');
+      return;
+    }
+    // Kapalı alan için ilk noktayı sona ekle
+    coords.push(coords[0]);
+    const polyWKT = `POLYGON((${coords.join(', ')}))`;
+    const dto = {
+      name: polygonName,
+      wkt: polyWKT
+    };
+    axios.post('http://localhost:5228/api/point', dto)
+      .then(res => {
+        setWktList(prev => [...prev, {
+          id: res.data.id,
+          wkt: res.data.wkt,
+          name: res.data.name,
+          type: res.data.type,
+        }]);
+        setShowPolygonModal(false);
+        setPolygonPoints(['', '', '']);
+        setPolygonName('');
+      })
+      .catch(() => {
+        alert('Poligon eklenirken hata oluştu!');
+      });
+  };
+
+  // Haritadan çizgi çizimiyle ekleme için state
+  const [pendingDrawnLineWKT, setPendingDrawnLineWKT] = useState(null);
+  const [pendingDrawnLineName, setPendingDrawnLineName] = useState('');
+
+  // Haritadan poligon ekleme için state
+  const [pendingDrawnPolygonWKT, setPendingDrawnPolygonWKT] = useState(null);
+  const [pendingDrawnPolygonName, setPendingDrawnPolygonName] = useState('');
+  const [showPolygonOptionModal, setShowPolygonOptionModal] = useState(false);
+
+  // Silme için seçenek modalı
+  const [showDeleteOptionModal, setShowDeleteOptionModal] = useState(false);
+  const [deleteType, setDeleteType] = useState(null); // 'point', 'line', 'polygon'
+
+  // Line ve Polygon silme modalı için stateler
+  const [showLineDeleteModal, setShowLineDeleteModal] = useState(false);
+  const [deleteLineWKT, setDeleteLineWKT] = useState('');
+  const [deleteLineName, setDeleteLineName] = useState('');
+  const [showPolygonDeleteModal, setShowPolygonDeleteModal] = useState(false);
+  const [deletePolygonWKT, setDeletePolygonWKT] = useState('');
+  const [deletePolygonName, setDeletePolygonName] = useState('');
+
+  // Ad düzenleme için state
+  const [editingId, setEditingId] = useState(null);
+  const [editingName, setEditingName] = useState('');
+  
+  // Aktif polygon seçimi için state
+  const [activePolygonId, setActivePolygonId] = useState(null);
+  
+  // Tip seçimi için state (sadece görsel)
+  const [selectedTip, setSelectedTip] = useState('A');
+
   return (
     <div>
-      <nav className='navbar'>
-        <h1>TÜRKİYE HARİTASI</h1>
-
-        <div className='form-buttons'>
-          <button
-            onClick={() => {
-              setShowAddForm(!showAddForm);
-              setEklemeModu(!eklemeModu); // Butona basınca ekleme modunu aç/kapat
+      <nav className='navbar' style={{background:'#6c2eb7', color:'#fff', padding:'24px 0 16px 0', borderRadius:'0 0 8px 8px', boxShadow:'0 2px 12px rgba(108,46,183,0.06)', marginBottom:24}}>
+        <h1 style={{
+          margin:'0 0 8px 0',
+          fontWeight:600,
+          fontFamily:'Inter, Segoe UI, Arial, sans-serif',
+          fontSize:'2.1rem',
+          letterSpacing:'2px',
+          color:'#fff',
+          textShadow:'0 2px 8px rgba(108,46,183,0.08)',
+          borderBottom:'1.5px solid #e0d7f7',
+          paddingBottom: '6px',
+          marginBottom: '12px',
+          lineHeight: 1.1
+        }}>Türkiye Haritası</h1>
+        <div style={{fontSize:'1.1rem', color:'#e0d7f7', marginBottom:16, fontWeight:500, letterSpacing:'0.5px'}}>Coğrafi Veri Yönetimi Sistemi</div>
+        <div style={{fontSize:'0.9rem', color:'#e0d7f7', marginBottom:8, fontWeight:400}}>
+          {getActivePolygon(wktList, activePolygonId) ? 
+            `✅ Aktif Polygon: ${getActivePolygon(wktList, activePolygonId).name}` : 
+            '⚠️ Önce polygon oluşturun!'
+          }
+        </div>
+        <div style={{fontSize:'0.9rem', color:'#e0d7f7', marginBottom:8, fontWeight:400}}>
+          🎯 Seçili Tip: <strong style={{color:'#fff'}}>Tip {selectedTip}</strong>
+        </div>
+        <div style={{marginBottom:16}}>
+          <select 
+            value={activePolygonId || ''} 
+            onChange={(e) => setActivePolygonId(e.target.value)}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '6px',
+              border: '1px solid #e0d7f7',
+              background: '#fff',
+              color: '#6c2eb7',
+              fontSize: '0.9rem',
+              fontWeight: '500',
+              minWidth: '200px',
+              marginRight: '12px'
             }}
-            style={{ backgroundColor: eklemeModu ? '#d29ddc' : '' }}
           >
-            WKT Ekle
-          </button>
-          <button onClick={() => setShowDeleteForm(!showDeleteForm)}>WKT Sil</button>
-          <button onClick={() => setShowDistanceForm(!showDistanceForm)}>Mesafe Ölçümü</button>
+            <option value="">Polygon Seçin</option>
+            {wktList.filter(item => item.type === 'Polygon').map(polygon => (
+              <option key={polygon.id} value={polygon.id}>
+                {polygon.name} (ID: {polygon.id})
+              </option>
+            ))}
+          </select>
+          
+          <select 
+            value={selectedTip} 
+            onChange={(e) => setSelectedTip(e.target.value)}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '6px',
+              border: '1px solid #e0d7f7',
+              background: '#fff',
+              color: '#6c2eb7',
+              fontSize: '0.9rem',
+              fontWeight: '500',
+              minWidth: '150px'
+            }}
+          >
+            <option value="A">Tip A</option>
+            <option value="B">Tip B</option>
+            <option value="C">Tip C</option>
+          </select>
+        </div>
+        <div className='form-buttons' style={{display:'flex',gap:12,flexWrap:'wrap',justifyContent:'space-between',alignItems:'center',maxWidth:600,margin:'0 auto'}}>
+          <div style={{display:'flex',gap:12}}>
+            <button
+              onClick={() => {
+                setShowPointOptionModal(true);
+                setSelectedPoint(null); // Ekleme moduna girerken bilgi penceresini kapat
+              }}
+              style={{ backgroundColor: eklemeModu ? '#d29ddc' : '' }}
+            >
+              Point Ekle
+            </button>
+            <button onClick={() => {
+              setShowLineOptionModal(true);
+              setSelectedPoint(null);
+            }}>Line Ekle</button>
+            <button onClick={() => {
+              setShowPolygonOptionModal(true);
+              setSelectedPoint(null);
+            }}>Poligon Ekle</button>
+          </div>
+          <button onClick={() => {
+            setShowDeleteOptionModal(true);
+            setSelectedPoint(null);
+          }}>Veri Sil</button>
         </div>
 
-        {/* Ekleme formu */}
-        {showAddForm && (
-          <div className='form-area'>
-            <input
-              type='text'
-              placeholder='Eklenecek Nokta:'
-              value={newWKT}
-              onChange={(e) => setNewWKT(e.target.value)}
-            />
-            <input
-              type='text'
-              placeholder='Konum Adı:'
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-            />
-            <button onClick={handleAddWKT}>Ekle</button>
+        {/* Point ekleme için seçenek modalı */}
+        {showPointOptionModal && (
+          <div className="modal-overlay">
+            <div className="modal-content" style={{position:'relative'}}>
+              <button onClick={()=>setShowPointOptionModal(false)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+              <h3>Point Ekleme Yöntemi Seç</h3>
+              <button style={{width:'100%',marginBottom:10}} onClick={()=>{setShowPointOptionModal(false);setShowPointModal(true);}}>Koordinat Girerek Ekle</button>
+              <button style={{width:'100%'}} onClick={()=>{
+                setShowPointOptionModal(false);
+                setEklemeModu(true);
+              }}>Haritaya Tıklayarak Ekle</button>
+            </div>
           </div>
         )}
 
-        {/* Silme formu */}
-        {showDeleteForm && (
-          <div className='form-area'>
-            <input
-              type='text'
-              placeholder='Silinecek Nokta Değeri:'
-              value={deleteWKT}
-              onChange={(e) => setDeleteWKT(e.target.value)}
-            />
-            <button onClick={handleDeleteWKT}>Sil</button>
+        {/* Point ekleme için modal */}
+        {showPointModal && (
+          <div className="modal-overlay">
+            <div className="modal-content" style={{position:'relative'}}>
+              <button onClick={()=>setShowPointModal(false)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+              <h3>Nokta (Point) Ekle</h3>
+              <input
+                type="text"
+                placeholder="Nokta (POINT(x y))"
+                value={pointWKT}
+                onChange={e => setPointWKT(e.target.value)}
+                style={{width:'100%',marginBottom:10}}
+              />
+              <input
+                type="text"
+                placeholder="Nokta Adı"
+                value={pointName}
+                onChange={e => setPointName(e.target.value)}
+                style={{width:'100%',marginBottom:10}}
+              />
+              <select
+                value={pointTip}
+                onChange={e => setPointTip(e.target.value)}
+                style={{width:'100%',marginBottom:10}}
+              >
+                <option value="A">A Tipi (Polygon içinde herhangi yere çizilebilir)</option>
+                <option value="B">B Tipi (A tipi objelerin başlangıç/bitiş noktalarıyla kesişmeli)</option>
+                <option value="C">C Tipi (A tipi objelerle kesişmemeli, B tipi üzerine çizilebilir)</option>
+              </select>
+              <div style={{display:'flex',gap:10}}>
+                <button onClick={handlePointModalSubmit}>Kaydet</button>
+                <button onClick={()=>setShowPointModal(false)}>İptal</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Haritaya tıklayarak ekleme için isim modalı */}
+        {pendingMapPoint && (
+          <div className="modal-overlay">
+            <div className="modal-content" style={{position:'relative'}}>
+              <button onClick={()=>{setPendingMapPoint(null);setEklemeModu(false);}} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+              <h3>Haritadan Nokta Ekle</h3>
+              <p style={{fontSize:12, color:'#888'}}>Koordinat: {pendingMapPoint}</p>
+              <input
+                type="text"
+                placeholder="Nokta Adı"
+                value={pointName}
+                onChange={e => setPointName(e.target.value)}
+                style={{width:'100%',marginBottom:10}}
+              />
+              <div style={{display:'flex',gap:10}}>
+                <button onClick={()=>{
+                  // Nokta ekle
+                  const dto = { 
+                    name: pointName, 
+                    wkt: pendingMapPoint,
+                    tip: selectedTip
+                  };
+                  axios.post('http://localhost:5228/api/point', dto)
+                    .then(() => {
+                      setWktList(prev => [...prev, {
+                        id: Date.now(),
+                        wkt: pendingMapPoint,
+                        name: pointName,
+                        type: 'Point',
+                        tip: selectedTip
+                      }]);
+                      setPendingMapPoint(null);
+                      setPointName('');
+                      setEklemeModu(false);
+                    })
+                    .catch(() => {
+                      alert('Nokta eklenirken hata oluştu!');
+                    });
+                }}>Kaydet</button>
+                <button onClick={()=>{setPendingMapPoint(null);setEklemeModu(false);}}>İptal</button>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Mesafe ölçüm formu */}
-        {showDistanceForm && (
-          <div className='form-area'>
-            <input
-              type='text'
-              placeholder='1. WKT Noktası (POINT(...))'
-              value={distanceWKT1}
-              onChange={(e) => setDistanceWKT1(e.target.value)}
-            />
-            <input
-              type='text'
-              placeholder='2. WKT Noktası (POINT(...))'
-              value={distanceWKT2}
-              onChange={(e) => setDistanceWKT2(e.target.value)}
-            />
-            <button onClick={handleDistanceMeasure}>Mesafeyi Hesapla ve Çizgi Oluştur</button>
+        {/* Point silme için modal */}
+        {showPointDeleteModal && (
+          <div className="modal-overlay">
+            <div className="modal-content" style={{position:'relative'}}>
+              <button onClick={()=>setShowPointDeleteModal(false)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+              <h3>Nokta (Point) Sil</h3>
+              <select
+                style={{width:'100%',marginBottom:10}}
+                value={deletePointName}
+                onChange={e => setDeletePointName(e.target.value)}
+              >
+                <option value="">Nokta Seçin</option>
+                {wktList.filter(item => item.type === 'Point').map(item => (
+                  <option key={item.id} value={item.name}>{item.name} - {item.wkt}</option>
+                ))}
+              </select>
+              <div style={{display:'flex',gap:10}}>
+                <button onClick={()=>{
+                  let target = wktList.find(item => item.type === 'Point' && item.name === deletePointName);
+                  if (!target) {
+                    alert('Silinecek nokta bulunamadı!');
+                    return;
+                  }
+                  axios.delete(`http://localhost:5228/api/point/${target.id}`)
+                    .then(() => {
+                      setWktList(prev => prev.filter(item => item.id !== target.id));
+                      setShowPointDeleteModal(false);
+                      setDeletePointWKT('');
+                      setDeletePointName('');
+                    })
+                    .catch(() => {
+                      alert('Silme işlemi başarısız!');
+                    });
+                }}>Sil</button>
+                <button onClick={()=>setShowPointDeleteModal(false)}>İptal</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Poligon ekleme için modal */}
+        {showPolygonModal && (
+          <div className="modal-overlay">
+            <div className="modal-content" style={{position:'relative'}}>
+              <button onClick={()=>setShowPolygonModal(false)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+              <h3>Poligon Ekle</h3>
+              {polygonPoints.map((pt, idx) => (
+                <input
+                  key={idx}
+                  type="text"
+                  placeholder={`Köşe ${idx+1} (POINT(x y))`}
+                  value={pt}
+                  onChange={e => {
+                    const arr = [...polygonPoints];
+                    arr[idx] = e.target.value;
+                    setPolygonPoints(arr);
+                  }}
+                  style={{width:'100%',marginBottom:10}}
+                />
+              ))}
+              <button style={{marginBottom:10}} onClick={()=>setPolygonPoints([...polygonPoints, ''])}>Köşe Ekle +</button>
+              <input
+                type="text"
+                placeholder="Poligon Adı"
+                value={polygonName}
+                onChange={e => setPolygonName(e.target.value)}
+                style={{width:'100%',marginBottom:10}}
+              />
+              <div style={{display:'flex',gap:10}}>
+                <button onClick={handlePolygonModalSubmit}>Kaydet</button>
+                <button onClick={()=>setShowPolygonModal(false)}>İptal</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Silme için seçenek modalı */}
+        {showDeleteOptionModal && (
+          <div className="modal-overlay">
+            <div className="modal-content" style={{position:'relative'}}>
+              <button onClick={()=>setShowDeleteOptionModal(false)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+              <h3>Silmek İstediğiniz Veri Tipini Seçin</h3>
+              <button style={{width:'100%',marginBottom:10}} onClick={()=>{setShowDeleteOptionModal(false);setDeleteType('point');setShowPointDeleteModal(true);}}>Point Sil</button>
+              <button style={{width:'100%',marginBottom:10}} onClick={()=>{setShowDeleteOptionModal(false);setDeleteType('line');setShowLineDeleteModal(true);}}>Line Sil</button>
+              <button style={{width:'100%'}} onClick={()=>{setShowDeleteOptionModal(false);setDeleteType('polygon');setShowPolygonDeleteModal(true);}}>Polygon Sil</button>
+            </div>
+          </div>
+        )}
+
+        {/* Line silme için modal */}
+        {showLineDeleteModal && (
+          <div className="modal-overlay">
+            <div className="modal-content" style={{position:'relative'}}>
+              <button onClick={()=>setShowLineDeleteModal(false)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+              <h3>Çizgi (Line) Sil</h3>
+              <select
+                style={{width:'100%',marginBottom:10}}
+                value={deleteLineName}
+                onChange={e => setDeleteLineName(e.target.value)}
+              >
+                <option value="">Çizgi Seçin</option>
+                {wktList.filter(item => item.type === 'LineString').map(item => (
+                  <option key={item.id} value={item.name}>{item.name} - {item.wkt}</option>
+                ))}
+              </select>
+              <div style={{display:'flex',gap:10}}>
+                <button onClick={()=>{
+                  let target = wktList.find(item => item.type === 'LineString' && item.name === deleteLineName);
+                  if (!target) {
+                    alert('Silinecek çizgi bulunamadı!');
+                    return;
+                  }
+                  axios.delete(`http://localhost:5228/api/point/${target.id}`)
+                    .then(() => {
+                      setWktList(prev => prev.filter(item => item.id !== target.id));
+                      setShowLineDeleteModal(false);
+                      setDeleteLineWKT('');
+                      setDeleteLineName('');
+                    })
+                    .catch(() => {
+                      alert('Silme işlemi başarısız!');
+                    });
+                }}>Sil</button>
+                <button onClick={()=>setShowLineDeleteModal(false)}>İptal</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Polygon silme için modal */}
+        {showPolygonDeleteModal && (
+          <div className="modal-overlay">
+            <div className="modal-content" style={{position:'relative'}}>
+              <button onClick={()=>setShowPolygonDeleteModal(false)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+              <h3>Poligon (Polygon) Sil</h3>
+              <select
+                style={{width:'100%',marginBottom:10}}
+                value={deletePolygonName}
+                onChange={e => setDeletePolygonName(e.target.value)}
+              >
+                <option value="">Poligon Seçin</option>
+                {wktList.filter(item => item.type === 'Polygon').map(item => (
+                  <option key={item.id} value={item.name}>{item.name} - {item.wkt}</option>
+                ))}
+              </select>
+              <div style={{display:'flex',gap:10}}>
+                <button onClick={()=>{
+                  let target = wktList.find(item => item.type === 'Polygon' && item.name === deletePolygonName);
+                  if (!target) {
+                    alert('Silinecek poligon bulunamadı!');
+                    return;
+                  }
+                  axios.delete(`http://localhost:5228/api/point/${target.id}`)
+                    .then(() => {
+                      setWktList(prev => prev.filter(item => item.id !== target.id));
+                      setShowPolygonDeleteModal(false);
+                      setDeletePolygonWKT('');
+                      setDeletePolygonName('');
+                    })
+                    .catch(() => {
+                      alert('Silme işlemi başarısız!');
+                    });
+                }}>Sil</button>
+                <button onClick={()=>setShowPolygonDeleteModal(false)}>İptal</button>
+              </div>
+            </div>
           </div>
         )}
       </nav>
@@ -211,34 +895,442 @@ function App() {
       {/* Harita bileşeni */}
       <MapComponent
         wktList={wktList}
-        setSelectedPoint={setSelectedPoint}
-        isAddingPoint={eklemeModu}
+        setSelectedPoint={handleSetSelectedPoint}
+        isAddingPoint={eklemeModu === true}
+        isAddingLine={eklemeModu === 'line'}
+        isAddingPolygon={eklemeModu === 'polygon'}
         onNewPoint={handleNewPointFromMap}
+        onNewLinePoint={pt => setPendingMapLine(prev => [...prev, pt])}
+        onNewLineWKT={wkt => {
+          setPendingDrawnLineWKT(wkt);
+          setEklemeModu(false);
+        }}
+        onNewPolygonWKT={wkt => {
+          setPendingDrawnPolygonWKT(wkt);
+          setEklemeModu(false);
+        }}
       />
+
+      {/* Veri Tablosu */}
+      <div style={{maxWidth:900, margin:'32px auto 0 auto', background:'#fff', borderRadius:12, boxShadow:'0 2px 16px rgba(108,46,183,0.06)', padding:24}}>
+        <h2 style={{color:'#6c2eb7', fontWeight:700, fontSize:'1.2rem', marginBottom:16, letterSpacing:'1px'}}>Mevcut Veriler</h2>
+        <table style={{width:'100%', borderCollapse:'collapse', fontSize:'1rem'}}>
+          <thead>
+            <tr style={{background:'#f8f6fc'}}>
+              <th style={{padding:'8px', borderBottom:'2px solid #e0d7f7', color:'#6c2eb7', fontWeight:600}}>ID</th>
+              <th style={{padding:'8px', borderBottom:'2px solid #e0d7f7', color:'#6c2eb7', fontWeight:600}}>Ad</th>
+              <th style={{padding:'8px', borderBottom:'2px solid #e0d7f7', color:'#6c2eb7', fontWeight:600}}>Tür</th>
+              <th style={{padding:'8px', borderBottom:'2px solid #e0d7f7', color:'#6c2eb7', fontWeight:600}}>Tip</th>
+              <th style={{padding:'8px', borderBottom:'2px solid #e0d7f7', color:'#6c2eb7', fontWeight:600, textAlign:'center'}}>Düzenle</th>
+            </tr>
+          </thead>
+          <tbody>
+            {wktList.length === 0 ? (
+              <tr><td colSpan={5} style={{textAlign:'center', color:'#aaa', padding:'16px'}}>Kayıt yok</td></tr>
+            ) : (
+              wktList.map(item => (
+                <tr key={item.id} style={{borderBottom:'1px solid #f0e9fa'}}>
+                  <td style={{padding:'8px', color:'#333'}}>{item.id}</td>
+                  <td style={{padding:'8px', color:'#333'}}>
+                    {editingId === item.id ? (
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={e => setEditingName(e.target.value)}
+                        style={{padding:'4px 8px', borderRadius:4, border:'1px solid #a084ca', marginRight:8}}
+                      />
+                    ) : (
+                      item.name
+                    )}
+                  </td>
+                  <td style={{padding:'8px', color:'#333', textTransform:'capitalize'}}>{item.type}</td>
+                  <td style={{padding:'8px', color:'#333', fontWeight:'bold'}}>
+                    {item.type === 'Polygon' ? '-' : (item.tip || 'A')}
+                  </td>
+                  <td style={{padding:'8px', textAlign:'center'}}>
+                    {editingId === item.id ? (
+                      <>
+                        <button style={{background:'#6c2eb7',color:'#fff',border:'none',borderRadius:4,padding:'4px 10px',marginRight:4,cursor:'pointer'}} onClick={() => {
+                          axios.put(`http://localhost:5228/api/point/${item.id}/wkt`, { wkt: item.wkt, name: editingName })
+                            .then(() => {
+                              setWktList(prev => prev.map(x => x.id === item.id ? { ...x, name: editingName } : x));
+                              setEditingId(null);
+                              setEditingName('');
+                            })
+                            .catch(() => alert('Güncelleme başarısız!'));
+                        }}>Kaydet</button>
+                        <button style={{background:'#e0e0e0',color:'#333',border:'none',borderRadius:4,padding:'4px 10px',cursor:'pointer'}} onClick={() => { setEditingId(null); setEditingName(''); }}>İptal</button>
+                      </>
+                    ) : (
+                      <span
+                        style={{marginLeft:0, cursor:'pointer', color:'#6c2eb7', fontSize:20, verticalAlign:'middle', display:'inline-block'}}
+                        title="Düzenle"
+                        onClick={() => { setEditingId(item.id); setEditingName(item.name); }}
+                      >
+                        {/* Mor tema kalem SVG */}
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M14.7 2.29a1 1 0 0 1 1.41 0l1.6 1.6a1 1 0 0 1 0 1.41l-9.13 9.13a1 1 0 0 1-.45.26l-3.2.8a.5.5 0 0 1-.61-.61l.8-3.2a1 1 0 0 1 .26-.45l9.13-9.13ZM13.29 4 4 13.29V16h2.71L16 6.71 13.29 4Z" fill="#6c2eb7"/>
+                        </svg>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {/* Bilgi penceresi */}
       {selectedPoint && (
-        <div
-          className="popup"
-          style={{
-            position: 'absolute',
-            background: 'white',
-            padding: '10px',
-            border: '1px solid black',
-            borderRadius: '5px',
-            top: '20px',
-            right: '20px',
-            zIndex: 1000,
-            width: '300px',
-          }}
-        >
-          <p><b>ID:</b> {selectedPoint.id}</p>
-          <p><b>İsim:</b> {selectedPoint.name}</p>
-          <p><b>WKT:</b> {selectedPoint.wkt}</p>
-          <p><b>Tür:</b> {selectedPoint.type}</p>
-          {selectedPoint.type === 'LineString' && selectedPoint.distance && (
-            <p><b>Mesafe:</b> {selectedPoint.distance} km</p>
-          )}
+        <div className="modal-overlay">
+          <div className="modal-content" style={{position:'relative'}}>
+            <button onClick={()=>setSelectedPoint(null)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+            <h3>{selectedPoint.type === 'Polygon' ? 'Poligon Bilgisi' : selectedPoint.type === 'LineString' ? 'Çizgi Bilgisi' : 'Nokta Bilgisi'}</h3>
+            <p><b>ID:</b> {selectedPoint.id}</p>
+            <p><b>İsim:</b> {selectedPoint.name}</p>
+            <p><b>WKT:</b> {selectedPoint.wkt}</p>
+            <p><b>Tür:</b> {selectedPoint.type}</p>
+            {selectedPoint.type === 'LineString' && selectedPoint.distance && (
+              <p><b>Mesafe:</b> {selectedPoint.distance} km</p>
+            )}
+            {/* Poligonun içinde kaç nokta ve line var? */}
+            {selectedPoint.type === 'Polygon' && (
+              <>
+                {/* Nokta sayısı */}
+                {(() => {
+                  try {
+                    const poly = new WKT().readFeature(selectedPoint.wkt, {dataProjection:'EPSG:4326',featureProjection:'EPSG:3857'}).getGeometry();
+                    const count = wktList.filter(item => item.type === 'Point').filter(pt => {
+                      const ptGeom = new WKT().readFeature(pt.wkt, {dataProjection:'EPSG:4326',featureProjection:'EPSG:3857'}).getGeometry();
+                      return poly.intersectsCoordinate(ptGeom.getCoordinates());
+                    }).length;
+                    return <p><b>Poligondaki Mevcut Point Sayısı:</b> {count}</p>;
+                  } catch {
+                    return <p><b>Poligondaki Mevcut Point Sayısı:</b> Hesaplanamadı</p>;
+                  }
+                })()}
+                {/* Line sayısı kaldırıldı */}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Nokta ekleme için isim modalı */}
+      {showNameModal && (
+        <div className="modal-overlay" style={{position:'fixed',top:0,left:0,width:'100vw',height:'100vh',background:'rgba(0,0,0,0.3)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div className="modal-content" style={{background:'white',padding:30,borderRadius:10,minWidth:300}}>
+            <h3>Yeni Nokta Ekle</h3>
+            <p>Koordinat: <span style={{fontSize:12}}>{clickedWKT}</span></p>
+            <input
+              type="text"
+              placeholder="Nokta adı giriniz"
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value)}
+              style={{width:'100%',marginBottom:10}}
+            />
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={handleNameModalSubmit}>Kaydet</button>
+              <button onClick={()=>{setShowNameModal(false);setClickedWKT(null);setNameInput('');setEklemeModu(false);}}>İptal</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Line ekleme için modal */}
+      {showLineModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{position:'relative'}}>
+            <button onClick={()=>setShowLineModal(false)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+            <h3>Çizgi (Line) Ekle</h3>
+            <input
+              type="text"
+              placeholder="1. Nokta (POINT(x y))"
+              value={linePoint1}
+              onChange={e => setLinePoint1(e.target.value)}
+              style={{width:'100%',marginBottom:10}}
+            />
+            <input
+              type="text"
+              placeholder="2. Nokta (POINT(x y))"
+              value={linePoint2}
+              onChange={e => setLinePoint2(e.target.value)}
+              style={{width:'100%',marginBottom:10}}
+            />
+            <input
+              type="text"
+              placeholder="Çizgi Adı"
+              value={lineName}
+              onChange={e => setLineName(e.target.value)}
+              style={{width:'100%',marginBottom:10}}
+            />
+                          <select
+                value={lineTip}
+                onChange={e => setLineTip(e.target.value)}
+                style={{width:'100%',marginBottom:10}}
+              >
+                <option value="A">A Tipi (Polygon içinde herhangi yere çizilebilir)</option>
+                <option value="B">B Tipi (A tipi objelerin başlangıç/bitiş noktalarıyla kesişmeli)</option>
+                <option value="C">C Tipi (A tipi objelerle kesişmemeli, B tipi üzerine çizilebilir)</option>
+              </select>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={handleLineModalSubmit}>Kaydet</button>
+              <button onClick={()=>setShowLineModal(false)}>İptal</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Haritadan line ekleme için isim modalı */}
+      {pendingMapLineModal && pendingMapLine.length === 2 && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{position:'relative'}}>
+            <button onClick={()=>{setPendingMapLine([]);setPendingMapLineModal(false);setEklemeModu(false);}} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+            <h3>Haritadan Çizgi (Line) Ekle</h3>
+            <p style={{fontSize:12, color:'#888'}}>1. Nokta: {pendingMapLine[0]}</p>
+            <p style={{fontSize:12, color:'#888'}}>2. Nokta: {pendingMapLine[1]}</p>
+            <input
+              type="text"
+              placeholder="Çizgi Adı"
+              value={pendingMapLineName}
+              onChange={e => setPendingMapLineName(e.target.value)}
+              style={{width:'100%',marginBottom:10}}
+            />
+                          <select
+                value={pendingMapLineTip}
+                onChange={e => setPendingMapLineTip(e.target.value)}
+                style={{width:'100%',marginBottom:10}}
+              >
+                <option value="A">A Tipi (Polygon içinde herhangi yere çizilebilir)</option>
+                <option value="B">B Tipi (A tipi objelerin başlangıç/bitiş noktalarıyla kesişmeli)</option>
+                <option value="C">C Tipi (A tipi objelerle kesişmemeli, B tipi üzerine çizilebilir)</option>
+              </select>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>{
+                // Aktif polygon kontrolü
+                const activePolygon = getActivePolygon(wktList, activePolygonId);
+                if (!activePolygon) {
+                  alert('Önce bir polygon seçin!');
+                  return;
+                }
+                
+                // WKT oluştur ve kaydet
+                const regex = /POINT\s*\(\s*([\d\.-]+)\s+([\d\.-]+)\s*\)/i;
+                const match1 = pendingMapLine[0].match(regex);
+                const match2 = pendingMapLine[1].match(regex);
+                if (!match1 || !match2 || !pendingMapLineName.trim()) {
+                  alert('Geçerli iki nokta ve isim girin!');
+                  return;
+                }
+                
+                // Line'ın her iki noktasının da polygon içinde olup olmadığını kontrol et
+                const point1WKT = `POINT(${match1[1]} ${match1[2]})`;
+                const point2WKT = `POINT(${match2[1]} ${match2[2]})`;
+                
+                if (!isPointInPolygon(point1WKT, activePolygon.wkt) || 
+                    !isPointInPolygon(point2WKT, activePolygon.wkt)) {
+                  alert('Line sadece seçili polygon içinde çizilebilir!');
+                  return;
+                }
+                
+                // B tipi için özel kontrol
+                if (pendingMapLineTip === 'B') {
+                  if (!isBTypeValid(lineWKT, wktList)) {
+                    alert('B tipi objeler sadece A tipi objelerin başlangıç veya bitiş noktalarıyla kesişebilir!');
+                    return;
+                  }
+                }
+                
+                const x1 = match1[1], y1 = match1[2];
+                const x2 = match2[1], y2 = match2[2];
+                const lineWKT = `LINESTRING(${x1} ${y1}, ${x2} ${y2})`;
+                const dto = {
+                  name: pendingMapLineName,
+                  wkt: lineWKT,
+                  tip: pendingMapLineTip
+                };
+                axios.post('http://localhost:5228/api/point', dto)
+                  .then(res => {
+                    setWktList(prev => [...prev, {
+                      id: res.data.id,
+                      wkt: res.data.wkt,
+                      name: res.data.name,
+                      type: res.data.type,
+                      tip: pendingMapLineTip
+                    }]);
+                    setPendingMapLine([]);
+                    setPendingMapLineModal(false);
+                    setPendingMapLineName('');
+                    setPendingMapLineTip('A');
+                    setEklemeModu(false);
+                  })
+                  .catch(() => {
+                    alert('Çizgi eklenirken hata oluştu!');
+                  });
+              }}>Kaydet</button>
+              <button onClick={()=>{setPendingMapLine([]);setPendingMapLineModal(false);setEklemeModu(false);}}>İptal</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Haritadan çizgi çizimiyle ekleme için isim modalı */}
+      {pendingDrawnLineWKT && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{position:'relative'}}>
+            <button onClick={()=>{setPendingDrawnLineWKT(null);setPendingDrawnLineName('');}} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+            <h3>Haritadan Çizgi (Line) Ekle</h3>
+            <p style={{fontSize:12, color:'#888'}}>Çizgi WKT: {pendingDrawnLineWKT}</p>
+            <input
+              type="text"
+              placeholder="Çizgi Adı"
+              value={pendingDrawnLineName}
+              onChange={e => setPendingDrawnLineName(e.target.value)}
+              style={{width:'100%',marginBottom:10}}
+            />
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>{
+                // Aktif polygon kontrolü
+                const activePolygon = getActivePolygon(wktList, activePolygonId);
+                if (!activePolygon) {
+                  alert('Önce bir polygon seçin!');
+                  return;
+                }
+                
+                if (!pendingDrawnLineName.trim()) {
+                  alert('Çizgi adı girin!');
+                  return;
+                }
+                
+                // Line'ın polygon içinde olup olmadığını kontrol et
+                // Basit kontrol: Line'ın başlangıç ve bitiş noktalarını kontrol et
+                const lineCoords = pendingDrawnLineWKT.match(/LINESTRING\s*\(\s*(.+?)\s*\)/i);
+                if (lineCoords) {
+                  const points = lineCoords[1].split(',').map(p => p.trim());
+                  const firstPoint = `POINT(${points[0]})`;
+                  const lastPoint = `POINT(${points[points.length - 1]})`;
+                  
+                  if (!isPointInPolygon(firstPoint, activePolygon.wkt) || 
+                      !isPointInPolygon(lastPoint, activePolygon.wkt)) {
+                    alert('Line sadece seçili polygon içinde çizilebilir!');
+                    return;
+                  }
+                }
+                
+                // B tipi için özel kontrol (bu fonksiyonda tip seçimi yok, varsayılan A)
+                // Bu kontrol çizgi çizimiyle ekleme için geçerli değil çünkü tip seçimi yok
+                
+                const dto = {
+                  name: pendingDrawnLineName,
+                  wkt: pendingDrawnLineWKT
+                };
+                axios.post('http://localhost:5228/api/point', dto)
+                  .then(res => {
+                    setWktList(prev => [...prev, {
+                      id: res.data.id,
+                      wkt: res.data.wkt,
+                      name: res.data.name,
+                      type: res.data.type,
+                    }]);
+                    setPendingDrawnLineWKT(null);
+                    setPendingDrawnLineName('');
+                  })
+                  .catch(() => {
+                    alert('Çizgi eklenirken hata oluştu!');
+                  });
+              }}>Kaydet</button>
+              <button onClick={()=>{setPendingDrawnLineWKT(null);setPendingDrawnLineName('');}}>İptal</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Poligon ekleme için seçenek modalı */}
+      {showPolygonOptionModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{position:'relative'}}>
+            <button onClick={()=>setShowPolygonOptionModal(false)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+            <h3>Poligon Ekleme Yöntemi Seç</h3>
+            <button style={{width:'100%',marginBottom:10}} onClick={()=>{setShowPolygonOptionModal(false);setShowPolygonModal(true);setSelectedPoint(null);}}>Koordinat Girerek Ekle</button>
+            <button style={{width:'100%'}} onClick={()=>{
+              setShowPolygonOptionModal(false);
+              setEklemeModu('polygon');
+              setSelectedPoint(null); // Ekleme moduna girerken bilgi penceresini kapat
+            }}>Haritadan Tıklayarak Çiz</button>
+          </div>
+        </div>
+      )}
+
+      {/* Haritadan poligon çizimiyle ekleme için isim modalı */}
+      {pendingDrawnPolygonWKT && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{position:'relative'}}>
+            <button onClick={()=>{
+              setPendingDrawnPolygonWKT(null);
+              setPendingDrawnPolygonName('');
+              setEklemeModu(false); // EKLENDİ
+            }} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+            <h3>Haritadan Poligon Ekle</h3>
+            <p style={{fontSize:12, color:'#888'}}>Poligon WKT: {pendingDrawnPolygonWKT}</p>
+            <input
+              type="text"
+              placeholder="Poligon Adı"
+              value={pendingDrawnPolygonName}
+              onChange={e => setPendingDrawnPolygonName(e.target.value)}
+              style={{width:'100%',marginBottom:10}}
+            />
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>{
+                if (!pendingDrawnPolygonName.trim()) {
+                  alert('Poligon adı girin!');
+                  return;
+                }
+                
+                const dto = {
+                  name: pendingDrawnPolygonName,
+                  wkt: pendingDrawnPolygonWKT
+                };
+                axios.post('http://localhost:5228/api/point', dto)
+                  .then(res => {
+                    setWktList(prev => [...prev, {
+                      id: res.data.id,
+                      wkt: res.data.wkt,
+                      name: res.data.name,
+                      type: res.data.type,
+                    }]);
+                    setPendingDrawnPolygonWKT(null);
+                    setPendingDrawnPolygonName('');
+                    setEklemeModu(false); // EKLENDİ
+                  })
+                  .catch(() => {
+                    alert('Poligon eklenirken hata oluştu!');
+                  });
+              }}>Kaydet</button>
+              <button onClick={()=>{
+                setPendingDrawnPolygonWKT(null);
+                setPendingDrawnPolygonName('');
+                setEklemeModu(false); // EKLENDİ
+              }}>İptal</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Line ekleme için seçenek modalı */}
+      {showLineOptionModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{position:'relative'}}>
+            <button onClick={()=>setShowLineOptionModal(false)} style={{position:'absolute',top:8,right:8,background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#888'}}>×</button>
+            <h3>Line Ekleme Yöntemi Seç</h3>
+            <button style={{width:'100%',marginBottom:10}} onClick={()=>{setShowLineOptionModal(false);setShowLineModal(true);setSelectedPoint(null);}}>Koordinat Girerek Ekle</button>
+            <button style={{width:'100%'}} onClick={()=>{
+              setShowLineOptionModal(false);
+              setPendingMapLine([]);
+              setEklemeModu('line');
+              setSelectedPoint(null); // Ekleme moduna girerken bilgi penceresini kapat
+            }}>Haritadan Ekleyerek Çiz</button>
+          </div>
         </div>
       )}
     </div>
