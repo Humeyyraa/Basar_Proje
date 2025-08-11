@@ -4,7 +4,8 @@ import React, { useEffect, useState } from 'react';
 import MapComponent from './MapComponent';
 import axios from 'axios';
 import WKT from 'ol/format/WKT';
-import Polygon from 'ol/geom/Polygon';
+// Backend base URL (development)
+axios.defaults.baseURL = 'http://localhost:5228';
 
 // Polygon içinde nokta kontrolü
 function isPointInPolygon(point, polygonWKT) {
@@ -174,13 +175,14 @@ function App() {
   }, [pendingMapLine]);
 
   useEffect(() => {
-    axios.get('http://localhost:5228/api/point')
+    axios.get('/api/point')
       .then(res => {
         const wktData = res.data.data.map(point => ({
           id: point.id,
           wkt: point.wkt,
           name: point.name || `Nokta ${point.id}`,
           type: point.type || 'Point',
+          tip: point.tip || undefined,
         }));
         setWktList(wktData);
       });
@@ -215,9 +217,10 @@ function App() {
     if (!nameInput.trim() || !clickedWKT) return;
     const dto = {
       name: nameInput,
-      wkt: clickedWKT
+      wkt: clickedWKT,
+      tip: selectedTip
     };
-    axios.post('http://localhost:5228/api/point', dto)
+    axios.post(`/api/point?polygonId=${activePolygonId}` , dto)
       .then((res) => {
         // Backend'den dönen veriye göre listeyi güncelle
         // (Varsa backend'den dönen yeni noktayı ekle, yoksa elle ekle)
@@ -226,6 +229,7 @@ function App() {
           wkt: clickedWKT,
           name: nameInput,
           type: 'Point',
+          tip: selectedTip,
         }]);
         setShowNameModal(false);
         setClickedWKT(null);
@@ -233,7 +237,7 @@ function App() {
         setEklemeModu(false);
       })
       .catch(err => {
-        alert('Nokta eklenirken hata oluştu!');
+        alert(err?.response?.data?.mesaj || 'Nokta eklenirken hata oluştu!');
         setShowNameModal(false);
         setClickedWKT(null);
         setNameInput('');
@@ -342,30 +346,30 @@ function App() {
       return;
     }
     
-    // B tipi için özel kontrol
+    const x1 = match1[1], y1 = match1[2];
+    const x2 = match2[1], y2 = match2[2];
+    const lineWKT = `LINESTRING(${x1} ${y1}, ${x2} ${y2})`;
+
+    // B tipi için özel kontrol (lineTip'e göre)
     if (lineTip === 'B') {
       if (!isBTypeValid(lineWKT, wktList)) {
         alert('B tipi objeler sadece A tipi objelerin başlangıç veya bitiş noktalarıyla kesişebilir!');
         return;
       }
     }
-    
-    const x1 = match1[1], y1 = match1[2];
-    const x2 = match2[1], y2 = match2[2];
-    const lineWKT = `LINESTRING(${x1} ${y1}, ${x2} ${y2})`;
     const dto = {
       name: lineName,
       wkt: lineWKT,
-      tip: selectedTip
+      tip: lineTip
     };
-    axios.post('http://localhost:5228/api/point', dto)
+    axios.post(`/api/point?polygonId=${activePolygonId}`, dto)
       .then(res => {
         setWktList(prev => [...prev, {
           id: res.data.id,
           wkt: res.data.wkt,
           name: res.data.name,
           type: res.data.type,
-          tip: selectedTip
+          tip: lineTip
         }]);
         setShowLineModal(false);
         setLinePoint1('');
@@ -373,8 +377,8 @@ function App() {
         setLineName('');
         setLineTip('A');
       })
-      .catch(() => {
-        alert('Çizgi eklenirken hata oluştu!');
+      .catch((err) => {
+        alert(err?.response?.data?.mesaj || 'Çizgi eklenirken hata oluştu!');
       });
   };
 
@@ -413,24 +417,24 @@ function App() {
     const dto = {
       name: pointName,
       wkt: wkt,
-      tip: selectedTip
+      tip: pointTip
     };
-    axios.post('http://localhost:5228/api/point', dto)
+    axios.post(`/api/point?polygonId=${activePolygonId}`, dto)
       .then(res => {
         setWktList(prev => [...prev, {
           id: res.data.id, // Backend'den dönen id kullanılıyor
           wkt: res.data.wkt,
           name: res.data.name,
           type: res.data.type,
-          tip: selectedTip
+          tip: pointTip
         }]);
         setShowPointModal(false);
         setPointWKT('');
         setPointName('');
         setPointTip('A');
       })
-      .catch(() => {
-        alert('Nokta eklenirken hata oluştu!');
+      .catch((err) => {
+        alert(err?.response?.data?.mesaj || 'Nokta eklenirken hata oluştu!');
       });
   };
 
@@ -451,7 +455,7 @@ function App() {
       return;
     }
     // Backend'e DELETE isteği at
-    axios.delete(`http://localhost:5228/api/point/${target.id}`)
+    axios.delete(`/api/point/${target.id}`)
       .then(() => {
         setWktList(prev => prev.filter(item => item.id !== target.id));
         setShowPointDeleteModal(false);
@@ -484,7 +488,7 @@ function App() {
       name: polygonName,
       wkt: polyWKT
     };
-    axios.post('http://localhost:5228/api/point', dto)
+    axios.post('/api/point', dto)
       .then(res => {
         setWktList(prev => [...prev, {
           id: res.data.id,
@@ -534,7 +538,7 @@ function App() {
 
   return (
     <div>
-      <nav className='navbar' style={{background:'#6c2eb7', color:'#fff', padding:'24px 0 16px 0', borderRadius:'0 0 8px 8px', boxShadow:'0 2px 12px rgba(108,46,183,0.06)', marginBottom:24}}>
+      <nav className='navbar' style={{background:'#6c2eb7', color:'#fff', padding:'24px 0 16px 0', borderRadius:'0 0 8px 8px', boxShadow:'0 2px 12px rgba(108,46,183,0.06)', marginBottom:0}}>
         <h1 style={{
           margin:'0 0 8px 0',
           fontWeight:600,
@@ -700,21 +704,21 @@ function App() {
                     wkt: pendingMapPoint,
                     tip: selectedTip
                   };
-                  axios.post('http://localhost:5228/api/point', dto)
-                    .then(() => {
+                  axios.post(`/api/point?polygonId=${activePolygonId}`, dto)
+                    .then((res) => {
                       setWktList(prev => [...prev, {
-                        id: Date.now(),
-                        wkt: pendingMapPoint,
-                        name: pointName,
-                        type: 'Point',
+                        id: res.data.id,
+                        wkt: res.data.wkt ?? pendingMapPoint,
+                        name: res.data.name ?? pointName,
+                        type: res.data.type ?? 'Point',
                         tip: selectedTip
                       }]);
                       setPendingMapPoint(null);
                       setPointName('');
                       setEklemeModu(false);
                     })
-                    .catch(() => {
-                      alert('Nokta eklenirken hata oluştu!');
+                    .catch((err) => {
+                      alert(err?.response?.data?.mesaj || 'Nokta eklenirken hata oluştu!');
                     });
                 }}>Kaydet</button>
                 <button onClick={()=>{setPendingMapPoint(null);setEklemeModu(false);}}>İptal</button>
@@ -735,9 +739,9 @@ function App() {
                 onChange={e => setDeletePointName(e.target.value)}
               >
                 <option value="">Nokta Seçin</option>
-                {wktList.filter(item => item.type === 'Point').map(item => (
-                  <option key={item.id} value={item.name}>{item.name} - {item.wkt}</option>
-                ))}
+                 {wktList.filter(item => item.type === 'Point').map(item => (
+                   <option key={item.id} value={item.name}>{item.name} (ID: {item.id}) - {item.wkt}</option>
+                 ))}
               </select>
               <div style={{display:'flex',gap:10}}>
                 <button onClick={()=>{
@@ -746,7 +750,7 @@ function App() {
                     alert('Silinecek nokta bulunamadı!');
                     return;
                   }
-                  axios.delete(`http://localhost:5228/api/point/${target.id}`)
+                  axios.delete(`/api/point/${target.id}`)
                     .then(() => {
                       setWktList(prev => prev.filter(item => item.id !== target.id));
                       setShowPointDeleteModal(false);
@@ -824,9 +828,9 @@ function App() {
                 onChange={e => setDeleteLineName(e.target.value)}
               >
                 <option value="">Çizgi Seçin</option>
-                {wktList.filter(item => item.type === 'LineString').map(item => (
-                  <option key={item.id} value={item.name}>{item.name} - {item.wkt}</option>
-                ))}
+                 {wktList.filter(item => item.type === 'LineString').map(item => (
+                   <option key={item.id} value={item.name}>{item.name} (ID: {item.id}) - {item.wkt}</option>
+                 ))}
               </select>
               <div style={{display:'flex',gap:10}}>
                 <button onClick={()=>{
@@ -835,7 +839,7 @@ function App() {
                     alert('Silinecek çizgi bulunamadı!');
                     return;
                   }
-                  axios.delete(`http://localhost:5228/api/point/${target.id}`)
+                  axios.delete(`/api/point/${target.id}`)
                     .then(() => {
                       setWktList(prev => prev.filter(item => item.id !== target.id));
                       setShowLineDeleteModal(false);
@@ -863,9 +867,9 @@ function App() {
                 onChange={e => setDeletePolygonName(e.target.value)}
               >
                 <option value="">Poligon Seçin</option>
-                {wktList.filter(item => item.type === 'Polygon').map(item => (
-                  <option key={item.id} value={item.name}>{item.name} - {item.wkt}</option>
-                ))}
+                 {wktList.filter(item => item.type === 'Polygon').map(item => (
+                   <option key={item.id} value={item.name}>{item.name} (ID: {item.id}) - {item.wkt}</option>
+                 ))}
               </select>
               <div style={{display:'flex',gap:10}}>
                 <button onClick={()=>{
@@ -874,7 +878,7 @@ function App() {
                     alert('Silinecek poligon bulunamadı!');
                     return;
                   }
-                  axios.delete(`http://localhost:5228/api/point/${target.id}`)
+                  axios.delete(`/api/point/${target.id}`)
                     .then(() => {
                       setWktList(prev => prev.filter(item => item.id !== target.id));
                       setShowPolygonDeleteModal(false);
@@ -951,7 +955,7 @@ function App() {
                     {editingId === item.id ? (
                       <>
                         <button style={{background:'#6c2eb7',color:'#fff',border:'none',borderRadius:4,padding:'4px 10px',marginRight:4,cursor:'pointer'}} onClick={() => {
-                          axios.put(`http://localhost:5228/api/point/${item.id}/wkt`, { wkt: item.wkt, name: editingName })
+                          axios.put(`/api/point/${item.id}/wkt`, { wkt: item.wkt, name: editingName })
                             .then(() => {
                               setWktList(prev => prev.map(x => x.id === item.id ? { ...x, name: editingName } : x));
                               setEditingId(null);
@@ -991,6 +995,9 @@ function App() {
             <p><b>İsim:</b> {selectedPoint.name}</p>
             <p><b>WKT:</b> {selectedPoint.wkt}</p>
             <p><b>Tür:</b> {selectedPoint.type}</p>
+            {selectedPoint.type !== 'Polygon' && (
+              <p><b>Tip:</b> {selectedPoint.tip || '-'}</p>
+            )}
             {selectedPoint.type === 'LineString' && selectedPoint.distance && (
               <p><b>Mesafe:</b> {selectedPoint.distance} km</p>
             )}
@@ -1150,7 +1157,7 @@ function App() {
                   wkt: lineWKT,
                   tip: pendingMapLineTip
                 };
-                axios.post('http://localhost:5228/api/point', dto)
+                axios.post(`/api/point?polygonId=${activePolygonId}`, dto)
                   .then(res => {
                     setWktList(prev => [...prev, {
                       id: res.data.id,
@@ -1165,8 +1172,8 @@ function App() {
                     setPendingMapLineTip('A');
                     setEklemeModu(false);
                   })
-                  .catch(() => {
-                    alert('Çizgi eklenirken hata oluştu!');
+                  .catch((err) => {
+                    alert(err?.response?.data?.mesaj || 'Çizgi eklenirken hata oluştu!');
                   });
               }}>Kaydet</button>
               <button onClick={()=>{setPendingMapLine([]);setPendingMapLineModal(false);setEklemeModu(false);}}>İptal</button>
@@ -1223,21 +1230,23 @@ function App() {
                 
                 const dto = {
                   name: pendingDrawnLineName,
-                  wkt: pendingDrawnLineWKT
+                  wkt: pendingDrawnLineWKT,
+                  tip: selectedTip // tip ekle
                 };
-                axios.post('http://localhost:5228/api/point', dto)
+                axios.post(`/api/point?polygonId=${activePolygonId}` , dto)
                   .then(res => {
                     setWktList(prev => [...prev, {
                       id: res.data.id,
                       wkt: res.data.wkt,
                       name: res.data.name,
                       type: res.data.type,
+                      tip: selectedTip,
                     }]);
                     setPendingDrawnLineWKT(null);
                     setPendingDrawnLineName('');
                   })
-                  .catch(() => {
-                    alert('Çizgi eklenirken hata oluştu!');
+                  .catch((err) => {
+                    alert(err?.response?.data?.mesaj || 'Çizgi eklenirken hata oluştu!');
                   });
               }}>Kaydet</button>
               <button onClick={()=>{setPendingDrawnLineWKT(null);setPendingDrawnLineName('');}}>İptal</button>
@@ -1291,7 +1300,7 @@ function App() {
                   name: pendingDrawnPolygonName,
                   wkt: pendingDrawnPolygonWKT
                 };
-                axios.post('http://localhost:5228/api/point', dto)
+                axios.post('/api/point', dto)
                   .then(res => {
                     setWktList(prev => [...prev, {
                       id: res.data.id,
