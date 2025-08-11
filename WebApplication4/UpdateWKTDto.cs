@@ -2,6 +2,6 @@
 {
     public class UpdateWKTDto
     {
-        public string WKT { get; set; }  // Yeni WKT değeri
+        public string WKT { get; set; }  
     }
 }

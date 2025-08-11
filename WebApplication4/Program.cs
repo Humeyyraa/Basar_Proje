@@ -9,25 +9,23 @@ var builder = WebApplication.CreateBuilder(args);
 
 var MyAllowSpecificOrigins = "_myAllowSpecificOrigins";
 
-// Veritabanı bağlantısı
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
         x => x.UseNetTopologySuite()));
 
-// Servis ekleme
 builder.Services.AddScoped<MyInterface, PointService>();
 
-// JSON ayarları
+ 
 builder.Services.AddControllers()
-    .AddNewtonsoftJson(); // NewtonsoftJson desteği
+    .AddNewtonsoftJson(); 
 
-// CORS servisini ekle
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(name: MyAllowSpecificOrigins,
                       policy =>
                       {
-                          policy.WithOrigins("http://localhost:3000") // React'in portu
+                          policy.WithOrigins("http://localhost:3000")
                                 .AllowAnyHeader()
                                 .AllowAnyMethod();
                       });
@@ -35,7 +33,6 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddEndpointsApiExplorer();
 
-// SWAGGER yapılandırması
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo
@@ -50,7 +47,7 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 
-    // Geometry tipi için Swagger desteği (WKT formatı)
+    
     c.MapType<Geometry>(() => new OpenApiSchema
     {
         Type = "string",
@@ -68,15 +65,25 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
-        // Swagger endpoint tanımı — HTTPS uyumlu
+       
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "My API V1");
-        c.RoutePrefix = string.Empty; // localhost:5000 açıldığında direkt swagger gelsin
+        c.RoutePrefix = string.Empty; 
     });
 }
 
-app.UseHttpsRedirection();
+// Only enforce HTTPS redirection outside development to avoid local TLS issues
+if (!app.Environment.IsDevelopment())
+{
+app.UseRouting();
 
-// CORS middleware buraya eklenmeli, UseAuthorization'dan önce
+// Only enforce HTTPS redirection outside development to avoid local TLS issues
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+}
+
+
 app.UseCors(MyAllowSpecificOrigins);
 
 app.UseAuthorization();

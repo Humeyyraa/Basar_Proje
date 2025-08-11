@@ -1,5 +1,4 @@
-﻿//PointService, veritabanı ile ilgili asıl işleri yapan sınıf.
-// Controller sadece yönlendirici, Service işin mutfağıdır.
+﻿
 using NetTopologySuite.IO;
 using WebApplication4;
 using System.Collections.Generic;
@@ -24,7 +23,7 @@ namespace WebApplication4.Services
         {
             try
             {
-                return _context.Points.ToList(); // uyarı
+                return _context.Points.ToList(); 
             }
             catch (Exception ex)
             {

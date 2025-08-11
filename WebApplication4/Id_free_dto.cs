@@ -1,9 +1,4 @@
-﻿/* Id değerini otomatik arttırdığımız için
-swaggerdan ıd kutucuğunu kaldırmak amacıyla oluşturduk. yalnızca girdi istediğimiz türleri yazdık. (x,y,name)
-using System.ComponentModel.DataAnnotations;  doğrulama attributelarını kullanabilmemizi sağlar.
-attribute lar uygulanacağı verinin üzerine yazılırlar.
-
- */
+﻿
 using System.ComponentModel.DataAnnotations;
 
 namespace WebApplication4

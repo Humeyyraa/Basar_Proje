@@ -12,13 +12,13 @@ import { toLonLat } from 'ol/proj';
 const MapComponent = ({ wktList, setSelectedPoint, isAddingPoint, onNewPoint, isAddingLine, onNewLinePoint, onNewLineWKT, isAddingPolygon, onNewPolygonWKT }) => {
   const mapRef = useRef();
   const mapInstance = useRef();
-  const drawRef = useRef(null); // Interaction'ı takip etmek için
+  const drawRef = useRef(null); 
   const lineClickHandlerRef = useRef(null);
 
   useEffect(() => {
     if (!mapRef.current) return;
 
-    // Sadece ilk seferde haritayı oluştur
+    
     if (!mapInstance.current) {
       mapInstance.current = new Map({
         target: mapRef.current,
@@ -28,7 +28,7 @@ const MapComponent = ({ wktList, setSelectedPoint, isAddingPoint, onNewPoint, is
     }
     const map = mapInstance.current;
 
-    // Tüm eski katmanları kaldır
+    
     map.getLayers().clear();
 
     const vectorSource = new VectorSource();
@@ -42,6 +42,7 @@ const MapComponent = ({ wktList, setSelectedPoint, isAddingPoint, onNewPoint, is
       feature.set('name', item.name || `Nokta ${index}`);
       feature.set('wkt', item.wkt);
       feature.set('type', item.type || 'Point');
+      feature.set('tip', item.tip || null);
       vectorSource.addFeature(feature);
     });
 
@@ -74,7 +75,6 @@ const MapComponent = ({ wktList, setSelectedPoint, isAddingPoint, onNewPoint, is
     map.addLayer(new TileLayer({ source: new OSM() }));
     map.addLayer(vectorLayer);
 
-    // Sadece bir interaction aktif olsun
     if (isAddingPoint) {
       drawRef.current = new Draw({ source: vectorSource, type: 'Point' });
       map.addInteraction(drawRef.current);
@@ -107,7 +107,6 @@ const MapComponent = ({ wktList, setSelectedPoint, isAddingPoint, onNewPoint, is
         drawRef.current = null;
       });
     } else {
-      // Sadece ekleme modunda DEĞİLSE click handler ekle
       const clickHandler = (evt) => {
         let foundPoint = null;
         let foundOther = null;
@@ -146,6 +145,7 @@ const MapComponent = ({ wktList, setSelectedPoint, isAddingPoint, onNewPoint, is
             wkt: properties.wkt,
             coordinates,
             type: geometryType,
+            tip: properties.tip || null,
             distance: distance?.toFixed(2) || null,
           });
         } else {
@@ -168,7 +168,7 @@ const MapComponent = ({ wktList, setSelectedPoint, isAddingPoint, onNewPoint, is
     }
   }, [wktList, isAddingPoint, isAddingLine, isAddingPolygon, onNewPoint, onNewLinePoint, onNewLineWKT, onNewPolygonWKT, setSelectedPoint]);
 
-  return <div ref={mapRef} style={{ width: '100%', height: '500px' }} />;
+  return <div ref={mapRef} style={{ width: '100%', height: '650px' }} />;
 };
 
 export default MapComponent;

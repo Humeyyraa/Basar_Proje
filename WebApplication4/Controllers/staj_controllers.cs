@@ -4,12 +4,13 @@ using System.Collections.Generic;
 using WebApplication4.Services;
 using WebApplication4.Helpers;
 using NetTopologySuite.IO;
+using NetTopologySuite.Geometries;
 using WebApplication4.Helpers;
 using Microsoft.EntityFrameworkCore;
 
 namespace WebApplication4.Controllers
 {
-    [Route("api/[controller]")]
+    [Route("api/point")]
     [ApiController]
     public class PointController : ControllerBase
     {
@@ -20,7 +21,6 @@ namespace WebApplication4.Controllers
             _context = context;
         }
 
-        // 1. TÜM NOKTALARI GETİR
         [HttpGet]
         public async Task<ActionResult> GetAllPoints()
         {
@@ -39,7 +39,6 @@ namespace WebApplication4.Controllers
         }
 
 
-        // 2. TEK BİR NOKTAYI ID İLE GETİR
         [HttpGet("{id}")]
         public ActionResult<ResponseDto<PointDto>> GetById(int id)
         {
@@ -51,7 +50,8 @@ namespace WebApplication4.Controllers
             {
                 Id = point.Id,
                 Name = point.Name,
-                WKT = point.Location?.AsText() // Geometry'yi WKT'ye çevir
+                WKT = point.Location?.AsText(), 
+                Tip = point.Tip
             };
 
             return Ok(new ResponseDto<PointDto>
@@ -61,20 +61,192 @@ namespace WebApplication4.Controllers
             });
         }
 
-
-        // 3. YENİ NOKTA EKLE
-
         
    [HttpPost]
-public async Task<IActionResult> Post(PointDto dto)
+public async Task<IActionResult> Post([FromBody] PointDto dto, [FromQuery] int? polygonId)
 {
-    var geometry = new NetTopologySuite.IO.WKTReader().Read(dto.WKT);
+    if (dto == null || string.IsNullOrWhiteSpace(dto.WKT))
+    {
+        return BadRequest(new ResponseDto<string>
+        {
+            Mesaj = "Geçersiz istek: WKT boş olamaz.",
+            Data = null
+        });
+    }
 
+    Geometry geometry;
+    try
+    {
+        geometry = new NetTopologySuite.IO.WKTReader().Read(dto.WKT);
+    }
+    catch
+    {
+        return BadRequest(new ResponseDto<string>
+        {
+            Mesaj = "Geçersiz WKT formatı. Lütfen geçerli bir WKT giriniz (örn: LINESTRING(x1 y1, x2 y2)).",
+            Data = null
+        });
+    }
+
+    var isPointOrLine = geometry is Point || geometry is LineString;
+    var isPolygon = geometry is Polygon;
+
+    Geometry? selectedPolygon = null;
+    if (isPointOrLine && polygonId.HasValue)
+    {
+        selectedPolygon = _context.Points
+            .AsEnumerable()
+            .Where(p => p.Id == polygonId.Value && p.Location is Polygon)
+            .Select(p => p.Location)
+            .FirstOrDefault();
+
+        if (selectedPolygon == null)
+        {
+            return BadRequest(new ResponseDto<string>
+            {
+                Mesaj = "Seçilen poligon bulunamadı.",
+                Data = null
+            });
+        }
+
+        if (!selectedPolygon.Covers(geometry))
+        {
+            return BadRequest(new ResponseDto<string>
+            {
+                Mesaj = "Seçilen poligonun dışında çizim yapılamaz.",
+                Data = null
+            });
+        }
+    }
+    else if (isPointOrLine)
+    {
+        var anyPolygonCovers = _context.Points
+            .AsEnumerable()
+            .Where(p => p.Location is Polygon)
+            .Select(p => (Polygon)p.Location)
+            .Any(poly => poly != null && poly.Covers(geometry));
+
+        if (!anyPolygonCovers)
+        {
+            return BadRequest(new ResponseDto<string>
+            {
+                Mesaj = "Herhangi bir poligonun dışında çizim yapılamaz.",
+                Data = null
+            });
+        }
+    }
+
+    var tip = dto.Tip?.Trim().ToUpperInvariant();
+    if (isPointOrLine && string.IsNullOrWhiteSpace(tip))
+    {
+        return BadRequest(new ResponseDto<string>
+        {
+            Mesaj = "Tip (A/B/C) zorunludur.",
+            Data = null
+        });
+    }
+
+    if (isPointOrLine && tip == "B")
+    {
+        // B tipi: 
+        var aTypeCandidates = _context.Points
+            .AsEnumerable()
+            .Where(p => ((p.Tip ?? string.Empty).Trim().ToUpperInvariant()) == "A");
+
+        if (selectedPolygon != null)
+        {
+            aTypeCandidates = aTypeCandidates.Where(p => p.Location != null && selectedPolygon.Covers(p.Location));
+        }
+
+        var aTypeGeometries = aTypeCandidates
+            .Where(p => p.Location is Point || p.Location is LineString)
+            .Select(p => p.Location)
+            .ToList();
+
+        // Numerik hassasiyet için küçük bir tolerans kullan
+        const double TOLERANCE = 1e-6; // derece cinsinden (~10 cm–1 m arası ölçek)
+        var intersectsWithA = aTypeGeometries.Any(aGeom =>
+            aGeom != null && (geometry.Intersects(aGeom) || geometry.IsWithinDistance(aGeom, TOLERANCE)));
+
+        if (!intersectsWithA)
+        {
+            return BadRequest(new ResponseDto<string>
+            {
+                Mesaj = "Tip B, Tip A ile kesişmelidir.",
+                Data = null
+            });
+        }
+    }
+    else if (isPointOrLine && tip == "A")
+    {
+        // A tipi
+    }
+    else if (isPointOrLine && tip == "C")
+    {
+        // C tipi
+        const double TOLERANCE = 1e-6;
+
+        var aTypeCandidatesForC = _context.Points
+            .AsEnumerable()
+            .Where(p => ((p.Tip ?? string.Empty).Trim().ToUpperInvariant()) == "A");
+        if (selectedPolygon != null)
+        {
+            aTypeCandidatesForC = aTypeCandidatesForC.Where(p => p.Location != null && selectedPolygon.Covers(p.Location));
+        }
+        var aTypeGeometriesForC = aTypeCandidatesForC
+            .Where(p => p.Location is Point || p.Location is LineString)
+            .Select(p => p.Location)
+            .ToList();
+
+        var intersectsWithAForC = aTypeGeometriesForC.Any(aGeom =>
+            aGeom != null && (geometry.Intersects(aGeom) || geometry.IsWithinDistance(aGeom, TOLERANCE)));
+        if (intersectsWithAForC)
+        {
+            return BadRequest(new ResponseDto<string>
+            {
+                Mesaj = "Tip C, Tip A ile kesişmemelidir.",
+                Data = null
+            });
+        }
+
+        var bTypeCandidatesForC = _context.Points
+            .AsEnumerable()
+            .Where(p => ((p.Tip ?? string.Empty).Trim().ToUpperInvariant()) == "B");
+        if (selectedPolygon != null)
+        {
+            bTypeCandidatesForC = bTypeCandidatesForC.Where(p => p.Location != null && selectedPolygon.Covers(p.Location));
+        }
+        var bTypeGeometriesForC = bTypeCandidatesForC
+            .Where(p => p.Location is Point || p.Location is LineString)
+            .Select(p => p.Location)
+            .ToList();
+
+        var intersectsWithBForC = bTypeGeometriesForC.Any(bGeom =>
+            bGeom != null && (geometry.Intersects(bGeom) || geometry.IsWithinDistance(bGeom, TOLERANCE)));
+        if (!intersectsWithBForC)
+        {
+            return BadRequest(new ResponseDto<string>
+            {
+                Mesaj = "Tip C, yalnızca Tip B üzerinde çizilebilir.",
+                Data = null
+            });
+        }
+    }
+    else if (isPointOrLine)
+    {
+        return BadRequest(new ResponseDto<string>
+        {
+            Mesaj = "Geçersiz tip. Geçerli değerler: A, B, C.",
+            Data = null
+        });
+    }
+
+    var normalizedTip = isPointOrLine ? tip : null;
     var point = new Point
     {
         Name = dto.Name,
         Location = geometry,
-        Tip = dto.Tip
+        Tip = normalizedTip
     };
 
     _context.Points.Add(point);
@@ -89,29 +261,6 @@ public async Task<IActionResult> Post(PointDto dto)
         tip = point.Tip
     });
 }
-
-        /*
-        [HttpPost]
-        public ActionResult AddPoint(DTO_CreatePoint dto)
-        {
-            var geometry = GeometryHelper.WktToGeometry(dto.WKT, 4326, 3857);
-
-            var point = new Point
-            {
-                Name = dto.Name,
-                Location = geometry
-            };
-
-            var added = _service.Add(point);
-
-            return Ok(new
-            {
-                added.Id,
-                added.Name,
-                added.Location
-            });
-        }
-        */
 
 
 
@@ -151,7 +300,6 @@ public async Task<IActionResult> Post(PointDto dto)
         }
 
 
-        // 5. KAYIT SİL
         [HttpDelete("{id}")]
         public ActionResult<ResponseDto<string>> DeletePoint(int id)
         {
@@ -175,7 +323,6 @@ public async Task<IActionResult> Post(PointDto dto)
             });
         }
 
-        // 6. TÜM ID'LERİ GETİR (Debug/test için)
         [HttpGet("ids")]
         public ActionResult<ResponseDto<List<int>>> GetAllIds()
         {
